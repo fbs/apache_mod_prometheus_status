@@ -4,6 +4,7 @@
 
 #include "mod_prometheus_status.h"
 #include "mod_prometheus_status_go.h"
+#include <sys/types.h>
 
 extern apr_hash_t *log_hash;
 extern unixd_config_rec ap_unixd_config;
@@ -273,7 +274,6 @@ static int prometheus_status_monitor() {
 
 /* prometheus_status_handler responds to /metrics requests */
 static int prometheus_status_handler(request_rec *r) {
-    int nbytes;
     char buffer[32768];
 
     // is the module enabled at all?
@@ -298,13 +298,17 @@ static int prometheus_status_handler(request_rec *r) {
         return(HTTP_INTERNAL_SERVER_ERROR);
     }
 
-    while((nbytes = read(metric_socket_fd, buffer, 32768)) > 0) {
+
+    ssize_t nbytes;
+    do {
+        nbytes = read(metric_socket_fd, buffer, 32768);
         if(nbytes < 0) {
             logErrorf("reading metrics failed: socket:%s fd:%d errno:%d (%s)", metric_socket, metric_socket_fd, errno, strerror(errno));
             ap_rputs("ERROR: failed fetch metrics\n", r);
             return(HTTP_INTERNAL_SERVER_ERROR);
         }
         if(nbytes == 0) {
+            // eof
             break;
         }
         buffer[nbytes] = 0;
@@ -313,7 +317,7 @@ static int prometheus_status_handler(request_rec *r) {
         if(nbytes > 3 && buffer[nbytes-1] == '\n' && buffer[nbytes-2] == '\n') {
             break;
         }
-    }
+    } while (nbytes > 0);
 
     prometheus_status_close_communication_socket();
 
